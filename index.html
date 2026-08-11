@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>제너레이티브 아트 캔버스</title>
+<style>
+  :root {
+    --bg: #0a0a12;
+    --panel-bg: rgba(20, 20, 30, 0.72);
+    --text: #e8e8f0;
+    --text-dim: #9494a8;
+    --accent: #8b5cf6;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Pretendard, sans-serif;
+    color: var(--text);
+    touch-action: none;
+  }
+  canvas {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    cursor: crosshair;
+  }
+  #ui {
+    position: fixed;
+    left: 16px;
+    top: 16px;
+    z-index: 10;
+    background: var(--panel-bg);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 14px 16px;
+    width: 220px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    transition: transform 0.25s ease, opacity 0.25s ease;
+  }
+  #ui.collapsed {
+    transform: translateX(-110%);
+    opacity: 0;
+    pointer-events: none;
+  }
+  #ui h1 {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0 0 12px 0;
+    letter-spacing: 0.02em;
+    color: var(--text);
+  }
+  .row {
+    margin-bottom: 12px;
+  }
+  .row label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 5px;
+  }
+  input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+  }
+  .modes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .mode-btn, .action-btn {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: var(--text);
+    font-size: 11px;
+    padding: 7px 6px;
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: center;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .mode-btn:hover, .action-btn:hover {
+    background: rgba(255,255,255,0.12);
+  }
+  .mode-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  #toggle-ui {
+    position: fixed;
+    left: 16px;
+    top: 16px;
+    z-index: 11;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: var(--panel-bg);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: var(--text);
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+  }
+  #toggle-ui.show { display: flex; }
+  #hint {
+    position: fixed;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 11px;
+    color: var(--text-dim);
+    z-index: 10;
+    pointer-events: none;
+    text-align: center;
+    opacity: 0.8;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div id="ui">
+  <h1>✨ 아트 캔버스</h1>
+
+  <div class="row">
+    <label><span>브러시 크기</span><span id="sizeVal">6</span></label>
+    <input type="range" id="size" min="1" max="30" value="6">
+  </div>
+
+  <div class="row">
+    <label><span>수명 (트레일)</span><span id="lifeVal">60</span></label>
+    <input type="range" id="life" min="10" max="150" value="60">
+  </div>
+
+  <div class="row">
+    <label>색상 모드</label>
+    <div class="modes">
+      <div class="mode-btn active" data-mode="rainbow">레인보우</div>
+      <div class="mode-btn" data-mode="fire">파이어</div>
+      <div class="mode-btn" data-mode="ocean">오션</div>
+      <div class="mode-btn" data-mode="mono">모노</div>
+    </div>
+  </div>
+
+  <div class="row">
+    <label>연결선 (별자리 효과)</label>
+    <div class="modes">
+      <div class="mode-btn active" data-link="on">켜기</div>
+      <div class="mode-btn" data-link="off">끄기</div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <div class="action-btn" id="clearBtn">지우기</div>
+    <div class="action-btn" id="saveBtn">PNG 저장</div>
+  </div>
+</div>
+
+<div id="toggle-ui">☰</div>
+<div id="hint">마우스/터치로 그려보세요 · 가만히 두면 저절로 움직여요</div>
+
+<script>
+(function () {
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  let W, H;
+
+  function resize() {
+    W = canvas.width = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // --- state ---
+  const state = {
+    brushSize: 6,
+    life: 60,
+    colorMode: 'rainbow',
+    linkOn: true,
+    hue: Math.random() * 360,
+  };
+
+  let particles = [];
+  const MAX_PARTICLES = 1400;
+
+  let pointer = { x: W / 2, y: H / 2, px: W / 2, py: H / 2, down: false, active: false, lastMove: Date.now() };
+
+  // idle ambient motion (lissajous-ish wander) when user is not interacting
+  let idleT = 0;
+
+  function colorFor(mode, hueBase, t) {
+    switch (mode) {
+      case 'fire':
+        return `hsl(${(20 + t * 30) % 50}, 100%, ${55 - t * 20}%)`;
+      case 'ocean':
+        return `hsl(${190 + t * 40}, 85%, ${55 - t * 15}%)`;
+      case 'mono':
+        return `hsl(${hueBase}, 70%, ${65 - t * 25}%)`;
+      case 'rainbow':
+      default:
+        return `hsl(${(hueBase + t * 60) % 360}, 90%, 60%)`;
+    }
+  }
+
+  function spawnParticle(x, y, speed) {
+    const angle = Math.random() * Math.PI * 2;
+    const spread = Math.min(speed * 0.15, 6);
+    const p = {
+      x, y,
+      vx: Math.cos(angle) * spread * Math.random() + (Math.random() - 0.5),
+      vy: Math.sin(angle) * spread * Math.random() + (Math.random() - 0.5) - 0.3,
+      size: state.brushSize * (0.5 + Math.random() * 0.9),
+      life: state.life,
+      maxLife: state.life,
+      hueBase: (state.hue + Math.random() * 40 - 20 + 360) % 360,
+    };
+    particles.push(p);
+    if (particles.length > MAX_PARTICLES) particles.splice(0, particles.length - MAX_PARTICLES);
+  }
+
+  function emitTrail(x, y, px, py) {
+    const dx = x - px, dy = y - py;
+    const dist = Math.hypot(dx, dy);
+    const steps = Math.max(1, Math.min(20, Math.floor(dist / 3)));
+    for (let i = 0; i < steps; i++) {
+      const t = i / steps;
+      spawnParticle(px + dx * t, py + dy * t, dist);
+    }
+    state.hue = (state.hue + dist * 0.3) % 360;
+  }
+
+  function update() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vx *= 0.98;
+      p.vy *= 0.98;
+      p.vy += 0.01; // gentle gravity
+      p.life -= 1;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+  }
+
+  function draw() {
+    // trailing fade
+    ctx.fillStyle = 'rgba(10, 10, 18, 0.14)';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.globalCompositeOperation = 'lighter';
+
+    for (const p of particles) {
+      const t = 1 - p.life / p.maxLife;
+      const alpha = p.life / p.maxLife;
+      const col = colorFor(state.colorMode, p.hueBase, t);
+      const size = p.size * (0.4 + alpha * 0.9);
+
+      const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, size * 2);
+      grad.addColorStop(0, col);
+      grad.addColorStop(1, 'transparent');
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, size * 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    if (state.linkOn) {
+      ctx.globalAlpha = 1;
+      const maxD = 70;
+      for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
+          const a = particles[i], b = particles[j];
+          const dx = a.x - b.x, dy = a.y - b.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < maxD * maxD) {
+            const d = Math.sqrt(d2);
+            const alpha = (1 - d / maxD) * 0.18 * Math.min(a.life / a.maxLife, b.life / b.maxLife);
+            if (alpha <= 0.002) continue;
+            ctx.strokeStyle = `rgba(200, 190, 255, ${alpha})`;
+            ctx.lineWidth = 0.6;
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.stroke();
+          }
+        }
+      }
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+  }
+
+  function loop() {
+    const now = Date.now();
+    const idle = now - pointer.lastMove > 700;
+
+    if (pointer.active && !idle) {
+      emitTrail(pointer.x, pointer.y, pointer.px, pointer.py);
+      pointer.px = pointer.x;
+      pointer.py = pointer.y;
+    } else if (idle) {
+      // ambient wandering emitter
+      idleT += 0.006;
+      const cx = W / 2 + Math.sin(idleT * 1.3) * W * 0.32;
+      const cy = H / 2 + Math.cos(idleT * 0.9) * H * 0.28;
+      spawnParticle(cx, cy, 4 + Math.sin(idleT * 3) * 2);
+    }
+
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // background init
+  ctx.fillStyle = '#0a0a12';
+  ctx.fillRect(0, 0, W, H);
+
+  // --- input handlers ---
+  function setPointer(x, y) {
+    pointer.x = x;
+    pointer.y = y;
+    pointer.lastMove = Date.now();
+  }
+
+  canvas.addEventListener('mousedown', (e) => {
+    pointer.down = true;
+    pointer.active = true;
+    setPointer(e.clientX, e.clientY);
+    pointer.px = e.clientX;
+    pointer.py = e.clientY;
+  });
+  window.addEventListener('mouseup', () => { pointer.down = false; });
+  canvas.addEventListener('mousemove', (e) => {
+    setPointer(e.clientX, e.clientY);
+    if (!pointer.active) { pointer.px = e.clientX; pointer.py = e.clientY; pointer.active = true; }
+  });
+  canvas.addEventListener('mouseleave', () => { pointer.active = false; });
+
+  canvas.addEventListener('touchstart', (e) => {
+    const t = e.touches[0];
+    pointer.active = true;
+    setPointer(t.clientX, t.clientY);
+    pointer.px = t.clientX;
+    pointer.py = t.clientY;
+  }, { passive: true });
+  canvas.addEventListener('touchmove', (e) => {
+    const t = e.touches[0];
+    setPointer(t.clientX, t.clientY);
+  }, { passive: true });
+  canvas.addEventListener('touchend', () => { pointer.active = false; });
+
+  // --- UI wiring ---
+  const sizeInput = document.getElementById('size');
+  const sizeVal = document.getElementById('sizeVal');
+  sizeInput.addEventListener('input', () => {
+    state.brushSize = Number(sizeInput.value);
+    sizeVal.textContent = sizeInput.value;
+  });
+
+  const lifeInput = document.getElementById('life');
+  const lifeVal = document.getElementById('lifeVal');
+  lifeInput.addEventListener('input', () => {
+    state.life = Number(lifeInput.value);
+    lifeVal.textContent = lifeInput.value;
+  });
+
+  document.querySelectorAll('.mode-btn[data-mode]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.mode-btn[data-mode]').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.colorMode = btn.dataset.mode;
+    });
+  });
+
+  document.querySelectorAll('.mode-btn[data-link]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.mode-btn[data-link]').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.linkOn = btn.dataset.link === 'on';
+    });
+  });
+
+  document.getElementById('clearBtn').addEventListener('click', () => {
+    particles = [];
+    ctx.fillStyle = '#0a0a12';
+    ctx.fillRect(0, 0, W, H);
+  });
+
+  document.getElementById('saveBtn').addEventListener('click', () => {
+    const link = document.createElement('a');
+    link.download = `art-${Date.now()}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  });
+
+  // collapsible panel
+  const ui = document.getElementById('ui');
+  const toggleBtn = document.getElementById('toggle-ui');
+  function collapseUI() {
+    ui.classList.add('collapsed');
+    toggleBtn.classList.add('show');
+  }
+  function expandUI() {
+    ui.classList.remove('collapsed');
+    toggleBtn.classList.remove('show');
+  }
+  toggleBtn.addEventListener('click', expandUI);
+  // auto-collapse on small screens after first interaction
+  let firstDraw = false;
+  canvas.addEventListener('mousedown', () => { if (!firstDraw && window.innerWidth < 700) { firstDraw = true; collapseUI(); } });
+
+  loop();
+})();
+</script>
+
+</body>
+</html>
