@@ -1,0 +1,65 @@
+name: Cloudflare Workers auto deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - index.html
+      - wrangler.jsonc
+      - .github/workflows/deploy-cloudflare.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: creative-toy-cloudflare-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy HTML canvas
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Prepare static assets
+        run: |
+          mkdir -p dist
+          cp index.html dist/index.html
+
+      - name: Check Cloudflare credentials
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CF_API_TOKEN" || { echo "::error::Missing CLOUDFLARE_API_TOKEN repository secret"; exit 1; }
+          test -n "$CF_ACCOUNT_ID" || { echo "::error::Missing CLOUDFLARE_ACCOUNT_ID repository secret"; exit 1; }
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+
+      - name: Verify deployed HTML matches commit
+        env:
+          SITE_URL: https://aldol-hosting-lab.aldol-lab.workers.dev/
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 12); do
+            if curl --compressed -fsSL --max-time 15 "${SITE_URL}?commit=${GITHUB_SHA}" -o /tmp/deployed-index.html; then
+              if cmp -s index.html /tmp/deployed-index.html; then
+                echo "Deployment verified: HTML matches index.html"
+                exit 0
+              fi
+            fi
+            sleep 5
+          done
+          echo "::error::Cloudflare response does not match the committed index.html"
+          exit 1
